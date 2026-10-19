@@ -1,0 +1,52 @@
+name: Build Glover Android Native APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Descargar Código del Repositorio
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Configurar Entorno Java JDK 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Configurar Android SDK y NDK
+      uses: android-actions/setup-android@v3
+
+    - name: Instalar Componentes del NDK
+      run: |
+        echo y | sdkmanager --install "ndk;25.2.9519653" "cmake;3.22.1" "platforms;android-33"
+
+    - name: Compilar Código Nativo C/C++ a ARM64
+      run: |
+        mkdir build_android
+        cd build_android
+        $ANDROID_HOME/cmake/3.22.1/bin/cmake .. \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_HOME/ndk/25.2.9519653/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-21 \
+          -DCMAKE_BUILD_TYPE=Release
+        make -j$(nproc)
+
+    - name: Estructurar Paquete APK
+      run: |
+        mkdir -p out/apk_libs/lib/arm64-v8a
+        find build_android -name "*.so" -exec cp {} out/apk_libs/lib/arm64-v8a/ \;
+        cd out/apk_libs && zip -r ../Glover_Android_Port_Native.apk . || cd ../..
+
+    - name: Subir APK como Artefacto Descargable
+      uses: actions/upload-artifact@v4
+      with:
+        name: Glover-Android-Native-APK
+        path: out/Glover_Android_Port_Native.apk
