@@ -44,26 +44,15 @@ jobs:
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
 
-        # Incluir SDL2
         add_subdirectory(sdl2_src)
 
-        # Buscar TODOS los archivos C y C++ en cualquier subcarpeta del proyecto
         file(GLOB_RECURSE GAME_SOURCES 
             "*.c" "*.cpp" "*.cc" "*.cxx"
         )
-
-        # Excluir la carpeta sdl2_src de los fuentes del juego para evitar conflictos
         list(FILTER GAME_SOURCES EXCLUDE REGEX ".*sdl2_src/.*")
 
-        # Imprimir los archivos encontrados para depuración en el log
-        foreach(src_file ${GAME_SOURCES})
-            message(STATUS "Archivo fuente encontrado: ${src_file}")
-        endforeach()
-
-        # Crear la librería nativa para Android
         add_library(main SHARED ${GAME_SOURCES})
 
-        # Incluir carpetas de cabeceras (.h) de forma recursiva
         file(GLOB_RECURSE ALL_HEADERS "*.h" "*.hpp")
         foreach(hdr ${ALL_HEADERS})
             get_filename_component(hdr_dir ${hdr} PATH)
@@ -75,7 +64,6 @@ jobs:
             ${CMAKE_CURRENT_SOURCE_DIR}/sdl2_src/include
         )
 
-        # Enlazar librerías de Android y SDL2
         target_link_libraries(main 
             SDL2 
             log 
@@ -86,11 +74,8 @@ jobs:
             z
         )
         EOF
-        cat CMakeLists.txt
-        echo "=== LISTANDO ARCHIVOS EN LA RAIZ ==="
-        ls -la
-        ls -la src/ || true
-        - name: Compilar Código C/C++ a ARM64 con NDK
+
+    - name: Compilar Código C/C++ a ARM64 con NDK
       run: |
         mkdir -p build_android
         cd build_android
