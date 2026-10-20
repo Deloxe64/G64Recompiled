@@ -31,20 +31,52 @@ jobs:
 
     - name: Descargar Plantilla Oficial SDL2 Android
       run: |
+        rm -rf sdl2_source
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 sdl2_source
 
-    - name: Integrar Código del Proyecto
+    - name: Estructurar Módulos NDK Limpios
       run: |
-        # Crear la carpeta de código nativo dentro de la plantilla oficial
-        mkdir -p sdl2_source/android-project/app/jni/src
+        JNI_DIR="sdl2_source/android-project/app/jni"
         
-        # Copiar tus archivos C/C++ si existen en el repositorio
-        find . -maxdepth 2 -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" \) ! -path "./sdl2_source*" -exec cp {} sdl2_source/android-project/app/jni/src/ \; || true
+        # 1. Copiar fuentes base de SDL2
+        mkdir -p $JNI_DIR/SDL2
+        cp -r sdl2_source/src $JNI_DIR/SDL2/
+        cp -r sdl2_source/include $JNI_DIR/SDL2/
+        cp sdl2_source/Android.mk $JNI_DIR/SDL2/
 
-        # Si hay una carpeta src en tu repo, la copiamos también
+        # 2. Copiar archivos fuente del juego
+        mkdir -p $JNI_DIR/src
+        find . -maxdepth 2 -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" \) ! -path "./sdl2_source*" -exec cp {} $JNI_DIR/src/ \; || true
         if [ -d "src" ]; then
-          cp -r src/* sdl2_source/android-project/app/jni/src/ || true
+          cp -r src/* $JNI_DIR/src/ || true
         fi
+
+        # 3. Crear Android.mk limpio sin dependencias estrictas forzadas
+        cat << 'EOF' > $JNI_DIR/Android.mk
+        LOCAL_PATH := $(call my-dir)
+
+        include $(CLEAR_VARS)
+        LOCAL_MODULE := main
+
+        LOCAL_C_INCLUDES := $(LOCAL_PATH)/SDL2/include $(LOCAL_PATH)/src
+
+        FILE_LIST := $(wildcard $(LOCAL_PATH)/src/*.c) $(wildcard $(LOCAL_PATH)/src/*.cpp)
+        LOCAL_SRC_FILES := $(FILE_LIST:$(LOCAL_PATH)/%=%)
+
+        LOCAL_SHARED_LIBRARIES := SDL2
+        LOCAL_LDLIBS := -lGLESv2 -lEGL -llog -landroid -lm -lz
+        LOCAL_CFLAGS += -w -D__ANDROID__
+
+        include $(BUILD_SHARED_LIBRARY)
+        EOF
+
+        # 4. Configurar Application.mk permitiendo omisión de dependencias huérfanas
+        cat << 'EOF' > $JNI_DIR/Application.mk
+        APP_ABI := arm64-v8a
+        APP_PLATFORM := android-21
+        APP_STL := c++_shared
+        APP_ALLOW_MISSING_DEPS := true
+        EOF
 
     - name: Compilar APK con Gradle Oficial
       run: |
