@@ -1,4 +1,4 @@
-name: Build Final Glover Port APK
+name: Build Final Glover Port APK (Auto-Assets)
 
 on:
   push:
@@ -34,24 +34,35 @@ jobs:
         rm -rf sdl2_source
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 sdl2_source
 
-    - name: Estructurar Proyecto y Rutina de Assets
+    - name: Estructurar Proyecto e Inyectar Assets Automáticamente
       run: |
         JNI_DIR="sdl2_source/android-project/app/jni"
+        ASSETS_DIR="sdl2_source/android-project/app/src/main/assets"
         
-        # 1. Copiar fuentes base de SDL2
+        # 1. Crear carpeta de assets en Android para que se empaqueten solos
+        mkdir -p $ASSETS_DIR
+        
+        # Si tienes una carpeta de recursos/assets en tu repo, la copiamos aquí
+        if [ -d "assets" ]; then
+          cp -r assets/* $ASSETS_DIR/
+        elif [ -d "data" ]; then
+          cp -r data/* $ASSETS_DIR/
+        fi
+
+        # 2. Copiar fuentes base de SDL2
         mkdir -p $JNI_DIR/SDL2
         cp -r sdl2_source/src $JNI_DIR/SDL2/
         cp -r sdl2_source/include $JNI_DIR/SDL2/
         cp sdl2_source/Android.mk $JNI_DIR/SDL2/
 
-        # 2. Copiar archivos fuente del juego
+        # 3. Copiar archivos fuente del juego
         mkdir -p $JNI_DIR/src
-        find . -maxdepth 2 -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" \) ! -path "./sdl2_source*" -exec cp {} $JNI_DIR/src/ \; || true
+        find . -maxdepth 2 -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" \) ! -path "./sdl2_source*" ! -path "./android_app*" -exec cp {} $JNI_DIR/src/ \; || true
         if [ -d "src" ]; then
           cp -r src/* $JNI_DIR/src/ || true
         fi
 
-        # 3. Android.mk
+        # 4. Android.mk
         cat << 'EOF' > $JNI_DIR/Android.mk
         LOCAL_PATH := $(call my-dir)
 
@@ -77,24 +88,21 @@ jobs:
         APP_ALLOW_MISSING_DEPS := true
         EOF
 
-    - name: Compilar APK y Firmar Automáticamente
+    - name: Compilar APK Definitivo
       run: |
         cd sdl2_source/android-project
         chmod +x gradlew
         export ANDROID_HOME=$ANDROID_HOME
         export NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
-        
-        # Compilar APK en modo release (generará el APK sin firmar o con clave de debug)
         ./gradlew assembleRelease
 
-    - name: Extraer y Preparar APK
+    - name: Extraer APK Generado
       run: |
         mkdir -p out_apk
-        # Buscar el APK compilado (usualmente en build/outputs/apk/release/)
-        find sdl2_source/android-project/ -name "*-release-unsigned.apk" -o -name "*.apk" | head -n 1 | xargs -I {} cp {} out_apk/Glover_Port_Final.apk
+        find sdl2_source/android-project/ -name "*.apk" | head -n 1 | xargs -I {} cp {} out_apk/Glover_Port_Auto.apk
 
     - name: Subir APK Final
       uses: actions/upload-artifact@v4
       with:
-        name: Glover-Android-Port-Final
-        path: out_apk/Glover_Port_Final.apk
+        name: Glover-Android-Port-Auto
+        path: out_apk/Glover_Port_Auto.apk
