@@ -34,15 +34,16 @@ jobs:
         rm -rf sdl2_src
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 sdl2_src
 
-    - name: Generar Archivo CMake Infalible con Buscador Global
+    - name: Generar CMakeLists.txt Blindado
       run: |
         cat << 'EOF' > CMakeLists.txt
         cmake_minimum_required(VERSION 3.18)
         project(GloverAndroid C CXX)
 
         set(CMAKE_CXX_STANDARD 17)
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
+        # Forzar ignorar advertencias para que no detengan la compilación por exit code 2
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w -D__ANDROID__")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w -D__ANDROID__")
 
         add_subdirectory(sdl2_src)
 
@@ -75,7 +76,7 @@ jobs:
         )
         EOF
 
-    - name: Compilar Código C/C++ a ARM64 con NDK
+    - name: Compilar Código Forzando Tolerancia a Fallos
       run: |
         mkdir -p build_android
         cd build_android
@@ -84,7 +85,7 @@ jobs:
           -DANDROID_ABI=arm64-v8a \
           -DANDROID_PLATFORM=android-21 \
           -DCMAKE_BUILD_TYPE=Release
-        make -j$(nproc)
+        make -k -j$(nproc) || make -j1
 
     - name: Empaquetar Artefacto APK / Librerías Nativas
       run: |
