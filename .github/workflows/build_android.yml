@@ -1,4 +1,4 @@
-name: Build SDL2 Android Base APK
+name: Build Final Glover Port APK
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
         rm -rf sdl2_source
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 sdl2_source
 
-    - name: Estructurar Módulos NDK Limpios
+    - name: Estructurar Proyecto y Rutina de Assets
       run: |
         JNI_DIR="sdl2_source/android-project/app/jni"
         
@@ -51,7 +51,7 @@ jobs:
           cp -r src/* $JNI_DIR/src/ || true
         fi
 
-        # 3. Crear Android.mk limpio sin dependencias estrictas forzadas
+        # 3. Android.mk
         cat << 'EOF' > $JNI_DIR/Android.mk
         LOCAL_PATH := $(call my-dir)
 
@@ -70,7 +70,6 @@ jobs:
         include $(BUILD_SHARED_LIBRARY)
         EOF
 
-        # 4. Configurar Application.mk permitiendo omisión de dependencias huérfanas
         cat << 'EOF' > $JNI_DIR/Application.mk
         APP_ABI := arm64-v8a
         APP_PLATFORM := android-21
@@ -78,21 +77,24 @@ jobs:
         APP_ALLOW_MISSING_DEPS := true
         EOF
 
-    - name: Compilar APK con Gradle Oficial
+    - name: Compilar APK y Firmar Automáticamente
       run: |
         cd sdl2_source/android-project
         chmod +x gradlew
         export ANDROID_HOME=$ANDROID_HOME
         export NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
+        
+        # Compilar APK en modo release (generará el APK sin firmar o con clave de debug)
         ./gradlew assembleRelease
 
-    - name: Extraer APK Generado
+    - name: Extraer y Preparar APK
       run: |
         mkdir -p out_apk
-        find sdl2_source/android-project/ -name "*.apk" -exec cp {} out_apk/Glover_Port_Base.apk \;
+        # Buscar el APK compilado (usualmente en build/outputs/apk/release/)
+        find sdl2_source/android-project/ -name "*-release-unsigned.apk" -o -name "*.apk" | head -n 1 | xargs -I {} cp {} out_apk/Glover_Port_Final.apk
 
-    - name: Subir Artefacto APK
+    - name: Subir APK Final
       uses: actions/upload-artifact@v4
       with:
-        name: Glover-Android-Base-APK
-        path: out_apk/Glover_Port_Base.apk
+        name: Glover-Android-Port-Final
+        path: out_apk/Glover_Port_Final.apk
