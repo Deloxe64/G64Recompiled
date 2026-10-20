@@ -1,4 +1,4 @@
-name: Build Glover Android Native APK
+name: Build Glover Android Native Port (Java + JNI)
 
 on:
   push:
@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-android:
+  build-android-native:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout del Repositorio del Puerto
+    - name: Checkout del Repositorio
       uses: actions/checkout@v4
       with:
         submodules: recursive
@@ -21,7 +21,7 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Instalar Android SDK, NDK y Gradle
+    - name: Instalar Android SDK, NDK y Build Tools
       run: |
         yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME \
           "ndk;25.2.9519653" \
@@ -29,52 +29,162 @@ jobs:
           "platforms;android-33" \
           "build-tools;33.0.2"
 
-    - name: Clonar la Plantilla SDL2 Android Oficial
+    - name: Clonar e Integrar Fuente de SDL2
       run: |
-        git clone https://github.com/libsdl-org/SDL.git sdl_android_template
-        # Copiar la estructura de soporte de Android provista por SDL2
-        cp -r sdl_android_template/android-project app/ || true
+        rm -rf sdl2_src
+        git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 sdl2_src
 
-    - name: Integrar Código C/C++ del Puerto en la App
+    - name: Construir Estructura de Proyecto Android (Java + Gradle + JNI)
       run: |
-        mkdir -p app/jni/src
-        # Mover o copiar los archivos fuente del juego a la ruta que lee el NDK de Android
-        if [ -d "src" ]; then
-          cp -r src/* app/jni/src/
-        else
-          cp -r *.c *.cpp *.h app/jni/src/ || true
-        end
+        mkdir -p android_app/app/src/main/java/com/glover/port
+        mkdir -p android_app/app/src/main/jni
+        mkdir -p android_app/app/src/main/res/values
 
-        # Crear un Android.mk universal para compilar todo el motor nativo
-        cat << 'EOF' > app/jni/src/Android.mk
+        # 1. Crear el wrapper Java para lanzar la Actividad Nativa
+        cat << 'EOF' > android_app/app/src/main/java/com/glover/port/MainActivity.java
+        package com.glover.port;
+
+        import org.libsdl.app.SDLActivity;
+
+        public class MainActivity extends SDLActivity {
+            @Override
+            protected String[] getLibraries() {
+                return new String[] {
+                    "SDL2",
+                    "main"
+                };
+            }
+        }
+        EOF
+
+        # Copiar clases Java auxiliares de SDL2
+        cp -r sdl2_src/android-project/app/src/main/java/org android_app/app/src/main/java/
+
+        # 2. Crear AndroidManifest.xml
+        cat << 'EOF' > android_app/app/src/main/AndroidManifest.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+            package="com.glover.port">
+
+            <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+            <application
+                android:label="Glover Native Port"
+                android:allowBackup="true"
+                android:icon="@mipmap/ic_launcher"
+                android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+                
+                <activity android:name=".MainActivity"
+                    android:configChanges="orientation|keyboardHidden|screenSize"
+                    android:screenOrientation="sensorLandscape"
+                    android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
+                </activity>
+            </application>
+        </manifest>
+        EOF
+
+        # 3. Copiar código fuente C/C++ al directorio JNI
+        cp -r sdl2_src android_app/app/src/main/jni/SDL2
+        
+        # Buscar y copiar todos los archivos C/C++ del proyecto Glover
+        find . -maxdepth 3 -type f \( -name "*.c" -o -name "*.cpp" \) ! -path "*/sdl2_src/*" ! -path "*/android_app/*" -exec cp {} android_app/app/src/main/jni/ \; || true
+        find . -maxdepth 3 -type f \( -name "*.h" -o -name "*.hpp" \) ! -path "*/sdl2_src/*" ! -path "*/android_app/*" -exec cp {} android_app/app/src/main/jni/ \; || true
+
+        # 4. Crear Android.mk para el NDK
+        cat << 'EOF' > android_app/app/src/main/jni/Android.mk
         LOCAL_PATH := $(call my-dir)
 
         include $(CLEAR_VARS)
         LOCAL_MODULE := main
 
-        # Buscar todos los archivos fuente del juego
-        LOCAL_SRC_FILES := $(wildcard $(LOCAL_PATH)/*.cpp) $(wildcard $(LOCAL_PATH)/*.c)
-        LOCAL_C_INCLUDES := $(LOCAL_PATH)
+        SDL_PATH := ./SDL2
+        LOCAL_C_INCLUDES := $(LOCAL_PATH)/$(SDL_PATH)/include $(LOCAL_PATH)
 
-        LOCAL_LDLIBS := -llog -landroid -lGLESv2 -lEGL -lz
+        # Buscar archivos C y C++ en la carpeta JNI
+        FILE_LIST := $(wildcard $(LOCAL_PATH)/*.c) $(wildcard $(LOCAL_PATH)/*.cpp)
+        LOCAL_SRC_FILES := $(FILE_LIST:$(LOCAL_PATH)/%=%)
+
         LOCAL_SHARED_LIBRARIES := SDL2
+        LOCAL_LDLIBS := -lGLESv2 -lEGL -llog -landroid -lm -lz
+
+        LOCAL_CFLAGS += -w -D__ANDROID__
 
         include $(BUILD_SHARED_LIBRARY)
         EOF
 
-    - name: Compilar APK Nativo con Gradle
+        # Incluir archivo Makefile de SDL2
+        cat << 'EOF' > android_app/app/src/main/jni/Application.mk
+        APP_ABI := arm64-v8a
+        APP_PLATFORM := android-21
+        APP_STL := c++_shared
+        EOF
+
+        # 5. Crear archivos de Gradle del proyecto
+        cat << 'EOF' > android_app/settings.gradle
+        include ':app'
+        EOF
+
+        cat << 'EOF' > android_app/build.gradle
+        buildscript {
+            repositories {
+                google()
+                mavenCentral()
+            }
+            dependencies {
+                classpath 'com.android.tools.build:gradle:7.4.2'
+            }
+        }
+        allprojects {
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        EOF
+
+        cat << 'EOF' > android_app/app/build.gradle
+        apply plugin: 'com.android.application'
+
+        android {
+            compileSdkVersion 33
+            defaultConfig {
+                applicationId "com.glover.port"
+                minSdkVersion 21
+                targetSdkVersion 33
+                versionCode 1
+                versionName "1.0"
+                ndk {
+                    abiFilters 'arm64-v8a'
+                }
+            }
+            externalNativeBuild {
+                ndkBuild {
+                    path 'src/main/jni/Android.mk'
+                }
+            }
+        }
+        EOF
+
+    - name: Compilar APK mediante Gradle (Java + NDK)
       run: |
+        cd android_app
+        chmod +x ../sdl2_src/android-project/gradlew || true
         export NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
-        cd app
-        ./gradlew assembleRelease
+        gradle assembleRelease || gradle assembleDebug
 
-    - name: Extraer y Guardar el APK Generado
+    - name: Extraer y Guardar APK
       run: |
-        mkdir -p out_apk
-        find app/ -name "*.apk" -exec cp {} out_apk/Glover_Native_Android.apk \;
+        mkdir -p out/
+        find android_app/ -name "*.apk" -exec cp {} out/Glover_Native_Port_Java.apk \;
 
-    - name: Subir APK como Artefacto
+    - name: Subir APK Resultante
       uses: actions/upload-artifact@v4
       with:
-        name: Glover-Android-Native-APK
-        path: out_apk/Glover_Native_Android.apk
+        name: Glover-Android-Java-Port
+        path: out/Glover_Native_Port_Java.apk
