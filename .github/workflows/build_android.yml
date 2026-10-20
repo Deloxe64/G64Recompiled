@@ -1,4 +1,4 @@
-name: Build Glover Android Native Port
+name: Build Glover Android Native APK
 
 on:
   push:
@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-android-apk:
+  build-android:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repositorio
+    - name: Checkout del Repositorio del Puerto
       uses: actions/checkout@v4
       with:
         submodules: recursive
@@ -21,7 +21,7 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Instalar NDK, CMake y SDK Tools
+    - name: Instalar Android SDK, NDK y Gradle
       run: |
         yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME \
           "ndk;25.2.9519653" \
@@ -29,77 +29,52 @@ jobs:
           "platforms;android-33" \
           "build-tools;33.0.2"
 
-    - name: Descargar SDL2 Oficial para Android
+    - name: Clonar la Plantilla SDL2 Android Oficial
       run: |
-        rm -rf sdl2_src
-        git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 sdl2_src
+        git clone https://github.com/libsdl-org/SDL.git sdl_android_template
+        # Copiar la estructura de soporte de Android provista por SDL2
+        cp -r sdl_android_template/android-project app/ || true
 
-    - name: Generar CMakeLists.txt Blindado
+    - name: Integrar Código C/C++ del Puerto en la App
       run: |
-        cat << 'EOF' > CMakeLists.txt
-        cmake_minimum_required(VERSION 3.18)
-        project(GloverAndroid C CXX)
+        mkdir -p app/jni/src
+        # Mover o copiar los archivos fuente del juego a la ruta que lee el NDK de Android
+        if [ -d "src" ]; then
+          cp -r src/* app/jni/src/
+        else
+          cp -r *.c *.cpp *.h app/jni/src/ || true
+        end
 
-        set(CMAKE_CXX_STANDARD 17)
-        # Forzar ignorar advertencias para que no detengan la compilación por exit code 2
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w -D__ANDROID__")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w -D__ANDROID__")
+        # Crear un Android.mk universal para compilar todo el motor nativo
+        cat << 'EOF' > app/jni/src/Android.mk
+        LOCAL_PATH := $(call my-dir)
 
-        add_subdirectory(sdl2_src)
+        include $(CLEAR_VARS)
+        LOCAL_MODULE := main
 
-        file(GLOB_RECURSE GAME_SOURCES 
-            "*.c" "*.cpp" "*.cc" "*.cxx"
-        )
-        list(FILTER GAME_SOURCES EXCLUDE REGEX ".*sdl2_src/.*")
+        # Buscar todos los archivos fuente del juego
+        LOCAL_SRC_FILES := $(wildcard $(LOCAL_PATH)/*.cpp) $(wildcard $(LOCAL_PATH)/*.c)
+        LOCAL_C_INCLUDES := $(LOCAL_PATH)
 
-        add_library(main SHARED ${GAME_SOURCES})
+        LOCAL_LDLIBS := -llog -landroid -lGLESv2 -lEGL -lz
+        LOCAL_SHARED_LIBRARIES := SDL2
 
-        file(GLOB_RECURSE ALL_HEADERS "*.h" "*.hpp")
-        foreach(hdr ${ALL_HEADERS})
-            get_filename_component(hdr_dir ${hdr} PATH)
-            include_directories(${hdr_dir})
-        endforeach()
-
-        target_include_directories(main PRIVATE 
-            ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/sdl2_src/include
-        )
-
-        target_link_libraries(main 
-            SDL2 
-            log 
-            android 
-            GLESv2 
-            EGL 
-            m 
-            z
-        )
+        include $(BUILD_SHARED_LIBRARY)
         EOF
 
-    - name: Compilar Código Forzando Tolerancia a Fallos
+    - name: Compilar APK Nativo con Gradle
       run: |
-        mkdir -p build_android
-        cd build_android
-        $ANDROID_HOME/cmake/3.22.1/bin/cmake .. \
-          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_HOME/ndk/25.2.9519653/build/cmake/android.toolchain.cmake \
-          -DANDROID_ABI=arm64-v8a \
-          -DANDROID_PLATFORM=android-21 \
-          -DCMAKE_BUILD_TYPE=Release
-        make -k -j$(nproc) || make -j1
+        export NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
+        cd app
+        ./gradlew assembleRelease
 
-    - name: Empaquetar Artefacto APK / Librerías Nativas
+    - name: Extraer y Guardar el APK Generado
       run: |
-        mkdir -p out/Glover_APK_Files/lib/arm64-v8a
-        find build_android -name "*.so" -exec cp {} out/Glover_APK_Files/lib/arm64-v8a/ \;
-        
-        if [ -d "assets" ]; then
-          cp -r assets out/Glover_APK_Files/
-        fi
+        mkdir -p out_apk
+        find app/ -name "*.apk" -exec cp {} out_apk/Glover_Native_Android.apk \;
 
-        cd out/Glover_APK_Files && zip -r ../Glover_Android_Port_ARM64.apk . || cd ../..
-
-    - name: Subir Archivo Resultante
+    - name: Subir APK como Artefacto
       uses: actions/upload-artifact@v4
       with:
-        name: Glover-Android-Port-ARM64
-        path: out/Glover_Android_Port_ARM64.apk
+        name: Glover-Android-Native-APK
+        path: out_apk/Glover_Native_Android.apk
