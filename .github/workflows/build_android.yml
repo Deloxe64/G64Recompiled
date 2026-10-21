@@ -1,4 +1,4 @@
-name: Build Glover Android Port (Auto-ROM Asset Extractor)
+name: Build Glover Android Port (Full Repo Sync)
 
 on:
   push:
@@ -34,42 +34,42 @@ jobs:
         rm -rf sdl2_source
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 sdl2_source
 
-    - name: Configurar Permisos de ROM y Estructura NDK
+    - name: Sincronización Completa de Archivos y Menús de PC
       run: |
         JNI_DIR="sdl2_source/android-project/app/jni"
         MANIFEST_FILE="sdl2_source/android-project/app/src/main/AndroidManifest.xml"
 
-        # 1. Modificar AndroidManifest para otorgar acceso a almacenamiento de la ROM .z64
+        # 1. Permisos para el manejo de archivos y ROM .z64
         sed -i '/<application/i \    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />' $MANIFEST_FILE
 
-        # 2. Copiar las fuentes de SDL2
+        # 2. Copiar librerías base de SDL2
         mkdir -p $JNI_DIR/SDL2
         cp -r sdl2_source/src $JNI_DIR/SDL2/
         cp -r sdl2_source/include $JNI_DIR/SDL2/
         cp sdl2_source/Android.mk $JNI_DIR/SDL2/
 
-        # 3. Copiar fuentes del juego
-        mkdir -p $JNI_DIR/src
-        find . -maxdepth 2 -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" \) ! -path "./sdl2_source*" -exec cp {} $JNI_DIR/src/ \; || true
-        if [ -d "src" ]; then
-          cp -r src/* $JNI_DIR/src/ || true
-        fi
+        # 3. COPIAR TODO EL REPOSITORIO DE FORMA RECURSIVA (Evita que el APK quede vacío)
+        mkdir -p $JNI_DIR/game_src
+        rsync -av --exclude='sdl2_source' --exclude='.git' --exclude='.github' ./ $JNI_DIR/game_src/
 
-        # 4. Android.mk con banderas para lectura de ROM N64 (.z64 US)
+        # 4. Android.mk apuntando a todo el contenido copiado de forma recursiva
         cat << 'EOF' > $JNI_DIR/Android.mk
         LOCAL_PATH := $(call my-dir)
 
         include $(CLEAR_VARS)
         LOCAL_MODULE := main
 
-        LOCAL_C_INCLUDES := $(LOCAL_PATH)/SDL2/include $(LOCAL_PATH)/src
+        # Buscar recursivamente todos los archivos .c y .cpp en la carpeta del juego
+        MY_CPP_LIST := $(shell find $(LOCAL_PATH)/game_src -name "*.cpp" -o -name "*.c")
+        LOCAL_SRC_FILES := $(MY_CPP_LIST:$(LOCAL_PATH)/%=%)
 
-        FILE_LIST := $(wildcard $(LOCAL_PATH)/src/*.c) $(wildcard $(LOCAL_PATH)/src/*.cpp)
-        LOCAL_SRC_FILES := $(FILE_LIST:$(LOCAL_PATH)/%=%)
+        # Incluir todas las subcarpetas del proyecto para que no falten cabeceras del menú de PC
+        MY_C_INCLUDES := $(shell find $(LOCAL_PATH)/game_src -type d)
+        LOCAL_C_INCLUDES := $(LOCAL_PATH)/SDL2/include $(MY_C_INCLUDES)
 
         LOCAL_SHARED_LIBRARIES := SDL2
         LOCAL_LDLIBS := -lGLESv2 -lEGL -llog -landroid -lm -lz
-        LOCAL_CFLAGS += -w -D__ANDROID__ -DAUTO_EXTRACT_Z64_US
+        LOCAL_CFLAGS += -w -D__ANDROID__ -DENABLE_PC_MENU -DAUTO_EXTRACT_Z64_US
 
         include $(BUILD_SHARED_LIBRARY)
         EOF
@@ -81,7 +81,7 @@ jobs:
         APP_ALLOW_MISSING_DEPS := true
         EOF
 
-    - name: Compilar APK con Gradle
+    - name: Compilar APK Completo con Gradle
       run: |
         cd sdl2_source/android-project
         chmod +x gradlew
@@ -89,13 +89,13 @@ jobs:
         export NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
         ./gradlew assembleRelease
 
-    - name: Extraer APK Generado
+    - name: Extraer y Guardar APK Definitivo
       run: |
         mkdir -p out_apk
-        find sdl2_source/android-project/ -name "*.apk" | head -n 1 | xargs -I {} cp {} out_apk/Glover_Port_AutoROM.apk
+        find sdl2_source/android-project/ -name "*.apk" | head -n 1 | xargs -I {} cp {} out_apk/Glover_Port_Complete.apk
 
     - name: Subir Artefacto APK
       uses: actions/upload-artifact@v4
       with:
-        name: Glover-Android-AutoROM-APK
-        path: out_apk/Glover_Port_AutoROM.apk
+        name: Glover-Android-Complete-APK
+        path: out_apk/Glover_Port_Complete.apk
